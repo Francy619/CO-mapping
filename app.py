@@ -26,10 +26,10 @@ st.markdown("---")
 # --- UI FOR INPUTS ---
 col1, col2 = st.columns(2)
 with col1:
-    num_students = st.number_input("Number of Students", min_value=1, max_value=200, value=60)
+    num_students = st.number_input("Number of Students", min_value=1, max_value=200, value=20)
     num_sections = st.number_input("Number of Sections (e.g. Parts A, B, C)", min_value=1, max_value=10, value=3)
 with col2:
-    num_cos = st.number_input("Number of Course Outcomes (COs)", min_value=1, max_value=12, value=5)
+    num_cos = st.number_input("Number of Course Outcomes (COs)", min_value=1, max_value=12, value=4)
 
 st.markdown("---")
 
@@ -63,7 +63,7 @@ for i in range(num_sections):
     with sc4:
         sec_max = st.number_input("Max Marks PER Question", min_value=1.0, value=default_max, key=f"sec_max_{i}")
     with sc5:
-        ans_any = st.number_input("Answer Any (Count)", min_value=1, value=2, key=f"ans_any_{i}")
+        ans_any = st.number_input("Answer Any (Count)", min_value=1, value=4, key=f"ans_any_{i}")
     
     prev_q_end = q_end
     q_list = [str(q) for q in range(int(q_start), int(q_end) + 1)]
