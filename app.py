@@ -1,85 +1,207 @@
 import streamlit as st
 import xlsxwriter
 import io
+import re
 
-st.set_page_config(page_title="CO Mark Entry Generator", layout="centered")
+st.set_page_config(page_title="Advanced CO & Mark Generator", layout="wide")
 
-st.title("Excel Mark Entry Template Generator")
-st.write("Define your assessment structure to generate an Excel file with automated CO and Total calculations.")
+st.title("Advanced Assessment & CO Mark Entry Generator")
+st.write("Configure sections, 'best of' logic, and CO weightages to generate a multi-sheet Excel tracker.")
 
-# Setup assessment parameters
-with st.form("setup_form"):
+# --- UI FOR INPUTS ---
+col1, col2 = st.columns(2)
+with col1:
     num_students = st.number_input("Number of Students", min_value=1, max_value=200, value=60)
-    num_questions = st.number_input("Number of Questions", min_value=1, max_value=20, value=5)
-    
-    st.write("Assign Course Outcomes (COs) to each question:")
-    cols = st.columns(5)
-    co_mapping = {}
-    for i in range(1, num_questions + 1):
-        with cols[(i-1) % 5]:
-            co_mapping[f"Q{i}"] = st.selectbox(f"Q{i} CO", ["CO1", "CO2", "CO3", "CO4", "CO5", "CO6"], key=f"q{i}")
-            
-    submit = st.form_submit_button("Generate Excel Template")
+    num_sections = st.number_input("Number of Sections (e.g. Parts A, B, C)", min_value=1, max_value=10, value=2)
+with col2:
+    num_cos = st.number_input("Number of Course Outcomes (COs)", min_value=1, max_value=12, value=5)
 
-if submit:
-    # Identify unique COs used in this assessment
-    unique_cos = sorted(list(set(co_mapping.values())))
+st.markdown("---")
+
+# 1. SECTION CONFIGURATION
+st.subheader("1. Section (Parts) Configuration")
+sections_data = []
+for i in range(num_sections):
+    st.markdown(f"**Section {i+1}**")
+    sc1, sc2, sc3, sc4 = st.columns(4)
+    with sc1:
+        sec_name = st.text_input(f"Section Name", value=chr(65+i), key=f"sec_name_{i}")
+    with sc2:
+        sec_qs = st.text_input(f"Question Numbers (comma separated)", value=f"{i*5+1}, {i*5+2}, {i*5+3}", key=f"sec_qs_{i}")
+    with sc3:
+        sec_max = st.number_input(f"Max Marks PER Question", min_value=1, value=5, key=f"sec_max_{i}")
+    with sc4:
+        ans_any = st.number_input(f"Answer Any (Count)", min_value=1, value=2, key=f"ans_any_{i}")
     
-    # Create an in-memory Excel file
+    q_list = [q.strip() for q in sec_qs.split(",") if q.strip()]
+    sections_data.append({
+        "name": sec_name,
+        "questions": q_list,
+        "mark_per_q": sec_max,
+        "answer_any": ans_any
+    })
+
+st.markdown("---")
+
+# 2. CO CONFIGURATION
+st.subheader("2. Course Outcome (CO) Mapping & Weightage")
+cos_data = {}
+for i in range(num_cos):
+    cc1, cc2, cc3 = st.columns([1, 1, 3])
+    with cc1:
+        co_name = st.text_input(f"CO Name", value=f"CO{i+1}", key=f"co_name_{i}")
+    with cc2:
+        co_weight = st.number_input(f"Weightage for {co_name}", min_value=1.0, value=10.0, key=f"co_w_{i}")
+    with cc3:
+        co_qs = st.text_input(f"Questions mapped to {co_name} (comma separated)", key=f"co_qs_{i}")
+    
+    q_list = [q.strip() for q in co_qs.split(",") if q.strip()]
+    cos_data[co_name] = {
+        "weightage": co_weight,
+        "questions": q_list
+    }
+
+# --- EXCEL GENERATION ---
+if st.button("Generate Excel File", type="primary"):
+    
+    # Calculate Max Marks for each CO
+    # Map each question to its max mark from section data
+    q_to_max_mark = {}
+    for sec in sections_data:
+        for q in sec["questions"]:
+            q_to_max_mark[q] = sec["mark_per_q"]
+            
+    # Compute max possible marks for each CO
+    co_max_marks = {}
+    for co, data in cos_data.items():
+        max_m = sum([q_to_max_mark.get(q, 0) for q in data["questions"]])
+        co_max_marks[co] = max_m if max_m > 0 else 1 # Avoid div by zero
+        
     output = io.BytesIO()
-    workbook = xlsxwriter.Workbook(output, {'in_memory': True})
-    worksheet = workbook.add_worksheet("Mark Entry")
+    wb = xlsxwriter.Workbook(output, {'in_memory': True})
     
-    # Formatting
-    header_format = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'align': 'center'})
-    cell_format = workbook.add_format({'border': 1, 'align': 'center'})
-    formula_format = workbook.add_format({'bold': True, 'bg_color': '#E2EFDA', 'border': 1, 'align': 'center'})
+    # Formats
+    fmt_hdr = wb.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True})
+    fmt_cell = wb.add_format({'border': 1, 'align': 'center'})
+    fmt_sec_tot = wb.add_format({'bold': True, 'bg_color': '#FCE4D6', 'border': 1, 'align': 'center'})
+    fmt_grand = wb.add_format({'bold': True, 'bg_color': '#E2EFDA', 'border': 1, 'align': 'center'})
+    
+    # Cond. Formatting for excess marks (Red fill, dark red text)
+    fmt_excess = wb.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
 
-    # Write Headers
-    headers = ["Roll No", "Student Name"] + [f"{q}\n({co})" for q, co in co_mapping.items()] + [f"Total {co}" for co in unique_cos] + ["Grand Total"]
-    for col_num, header in enumerate(headers):
-        worksheet.write(0, col_num, header, header_format)
-        worksheet.set_column(col_num, col_num, 15 if col_num == 1 else 10)
-
-    # Write Data Rows with Formulas
-    for row in range(1, num_students + 1):
-        worksheet.write(row, 0, row, cell_format) # Roll No
-        worksheet.write(row, 1, "", cell_format)  # Name placeholder
+    # --- SHEET 1: MARK ENTRY ---
+    ws1 = wb.add_worksheet("1. Mark Entry")
+    
+    ws1.write(0, 0, "Roll No", fmt_hdr)
+    ws1.write(0, 1, "Student Name", fmt_hdr)
+    ws1.set_column(0, 0, 8)
+    ws1.set_column(1, 1, 20)
+    
+    col_idx = 2
+    q_col_mapping = {} # Store column letter for each question to link to Sheet 2
+    sec_total_cols = []
+    
+    for sec in sections_data:
+        start_col_letter = xlsxwriter.utility.xl_col_to_name(col_idx)
         
-        # Placeholder for question marks
-        q_start_col = 2
-        q_end_col = q_start_col + num_questions - 1
-        for col in range(q_start_col, q_end_col + 1):
-            worksheet.write(row, col, "", cell_format)
+        # Write Question Headers
+        for q in sec["questions"]:
+            ws1.write(0, col_idx, f"Q{q}\n(Max:{sec['mark_per_q']})", fmt_hdr)
+            ws1.set_column(col_idx, col_idx, 8)
+            q_col_mapping[q] = xlsxwriter.utility.xl_col_to_name(col_idx)
+            col_idx += 1
             
-        # Write CO Total Formulas
-        co_start_col = q_end_col + 1
-        for i, co in enumerate(unique_cos):
-            # Find columns that belong to this CO
-            co_cols = [q_start_col + j for j, (q, mapped_co) in enumerate(co_mapping.items()) if mapped_co == co]
+        end_col_letter = xlsxwriter.utility.xl_col_to_name(col_idx - 1)
+        
+        # Write Section Total Header
+        ws1.write(0, col_idx, f"Part {sec['name']}\nTotal\n(Best {sec['answer_any']})", fmt_sec_tot)
+        ws1.set_column(col_idx, col_idx, 12)
+        sec_total_cols.append(xlsxwriter.utility.xl_col_to_name(col_idx))
+        
+        # Apply Conditional Formatting for Excess Questions
+        # Logic: If count of answered > allowed, highlight the smallest ones.
+        if len(sec["questions"]) > sec["answer_any"]:
+            ans_any = sec["answer_any"]
+            # Excel formula to flag excess (bottom marks) when more than N questions are answered
+            range_str = f"${start_col_letter}2:${end_col_letter}{num_students+1}"
+            formula = f"=AND({start_col_letter}2<>\"\", COUNT(${start_col_letter}2:${end_col_letter}2)>{ans_any}, RANK.EQ({start_col_letter}2,${start_col_letter}2:${end_col_letter}2, 1) + COUNTIF(${start_col_letter}2:{start_col_letter}2, {start_col_letter}2) - 1 <= COUNT(${start_col_letter}2:${end_col_letter}2)-{ans_any})"
+            ws1.conditional_format(range_str, {'type': 'formula', 'criteria': formula, 'format': fmt_excess})
             
-            if co_cols:
-                # Build formula like: =SUM(C2, E2, F2)
-                cells = [f"{xlsxwriter.utility.xl_col_to_name(c)}{row + 1}" for c in co_cols]
-                formula = f"=SUM({','.join(cells)})"
-                worksheet.write_formula(row, co_start_col + i, formula, formula_format)
-            else:
-                worksheet.write(row, co_start_col + i, 0, formula_format)
+        # Write Formulas for rows
+        for r in range(1, num_students + 1):
+            # Roll no and empty name
+            ws1.write(r, 0, r, fmt_cell)
+            ws1.write(r, 1, "", fmt_cell)
+            
+            # Blank cells for marks
+            for c in range(col_idx - len(sec["questions"]), col_idx):
+                ws1.write(r, c, "", fmt_cell)
                 
-        # Write Grand Total Formula
-        total_col = co_start_col + len(unique_cos)
-        first_co_cell = f"{xlsxwriter.utility.xl_col_to_name(co_start_col)}{row + 1}"
-        last_co_cell = f"{xlsxwriter.utility.xl_col_to_name(total_col - 1)}{row + 1}"
-        total_formula = f"=SUM({first_co_cell}:{last_co_cell})"
-        
-        worksheet.write_formula(row, total_col, total_formula, formula_format)
+            # 'Best of N' Sum Formula
+            # e.g., =IFERROR(LARGE(C2:E2, 1), 0) + IFERROR(LARGE(C2:E2, 2), 0)
+            large_parts = [f"IFERROR(LARGE({start_col_letter}{r+1}:{end_col_letter}{r+1}, {n}), 0)" for n in range(1, sec["answer_any"] + 1)]
+            best_n_formula = f"={'+'.join(large_parts)}"
+            ws1.write_formula(r, col_idx, best_n_formula, fmt_sec_tot)
+            
+        col_idx += 1
 
-    workbook.close()
+    # Grand Total Column
+    ws1.write(0, col_idx, "Grand Total", fmt_grand)
+    ws1.set_column(col_idx, col_idx, 12)
+    for r in range(1, num_students + 1):
+        # Sum of all section totals
+        sum_cells = [f"{c}{r+1}" for c in sec_total_cols]
+        if sum_cells:
+            ws1.write_formula(r, col_idx, f"=SUM({','.join(sum_cells)})", fmt_grand)
+        else:
+            ws1.write(r, col_idx, 0, fmt_grand)
+
+    grand_total_col_sheet1 = xlsxwriter.utility.xl_col_to_name(col_idx)
+
+    # --- SHEET 2: CONSOLIDATION ---
+    ws2 = wb.add_worksheet("2. CO Consolidation")
+    ws2.write(0, 0, "Roll No", fmt_hdr)
+    ws2.write(0, 1, "Student Name", fmt_hdr)
+    ws2.set_column(0, 0, 8)
+    ws2.set_column(1, 1, 20)
     
-    st.success("Template generated successfully!")
-    st.download_button(
-        label="📥 Download Excel File",
-        data=output.getvalue(),
-        file_name="CO_Mark_Entry_Template.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+    col2_idx = 2
+    for co, data in cos_data.items():
+        # Column for Raw CO Marks (summing all attempted, including excess)
+        ws2.write(0, col2_idx, f"{co} Total\n(Max:{co_max_marks[co]})", fmt_hdr)
+        ws2.set_column(col2_idx, col2_idx, 10)
+        
+        # Column for Weightage Converted Marks
+        ws2.write(0, col2_idx + 1, f"{co} Wgt.\n(Out of {data['weightage']})", fmt_sec_tot)
+        ws2.set_column(col2_idx + 1, col2_idx + 1, 12)
+        
+        for r in range(1, num_students + 1):
+            # Copy Roll & Name
+            ws2.write_formula(r, 0, f"='1. Mark Entry'!A{r+1}", fmt_cell)
+            ws2.write_formula(r, 1, f"='1. Mark Entry'!B{r+1}", fmt_cell)
+            
+            # Sum mapped questions from Sheet 1
+            cells_to_sum = [f"'1. Mark Entry'!{q_col_mapping[q]}{r+1}" for q in data["questions"] if q in q_col_mapping]
+            
+            if cells_to_sum:
+                ws2.write_formula(r, col2_idx, f"=SUM({','.join(cells_to_sum)})", fmt_cell)
+            else:
+                ws2.write(r, col2_idx, 0, fmt_cell)
+                
+            # Weightage formula: = (Obtained / CO_Max) * Weightage
+            raw_cell = f"{xlsxwriter.utility.xl_col_to_name(col2_idx)}{r+1}"
+            weight_formula = f"=({raw_cell}/{co_max_marks[co]})*{data['weightage']}"
+            ws2.write_formula(r, col2_idx + 1, weight_formula, fmt_sec_tot)
+            
+        col2_idx += 2
+        
+    # Bring over Grand Total (without excess)
+    ws2.write(0, col2_idx, "Exam Grand Total", fmt_grand)
+    ws2.set_column(col2_idx, col2_idx, 15)
+    for r in range(1, num_students + 1):
+        ws2.write_formula(r, col2_idx, f"='1. Mark Entry'!{grand_total_col_sheet1}{r+1}", fmt_grand)
+
+    wb.close()
+    
+    st.success("Advanced multi-sheet template generated!")
+    st.download_button("📥 Download Excel File", data=output.getvalue(), file_name="Advanced_CO_Marks.xlsx")
