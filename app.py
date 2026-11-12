@@ -4,7 +4,7 @@ import io
 
 st.set_page_config(page_title="Advanced CO & Mark Generator", layout="wide")
 
-st.title("Advanced Assessment & CO Mark Entry Generator")
+st.title("ST. DOMINIC'S COLLEGE, KANJIRAPALLY <br> Advanced Assessment & CO Mark Entry Generator")
 st.write("Configure sections, 'best of' logic, and CO weightages to generate a multi-sheet Excel tracker.")
 
 # --- UI FOR INPUTS ---
