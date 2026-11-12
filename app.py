@@ -11,7 +11,7 @@ st.write("Configure sections, 'best of' logic, and CO weightages to generate a m
 col1, col2 = st.columns(2)
 with col1:
     num_students = st.number_input("Number of Students", min_value=1, max_value=200, value=60)
-    num_sections = st.number_input("Number of Sections (e.g. Parts A, B, C)", min_value=1, max_value=10, value=2)
+    num_sections = st.number_input("Number of Sections (e.g. Parts A, B, C)", min_value=1, max_value=10, value=3)
 with col2:
     num_cos = st.number_input("Number of Course Outcomes (COs)", min_value=1, max_value=12, value=5)
 
@@ -20,20 +20,41 @@ st.markdown("---")
 # 1. SECTION CONFIGURATION
 st.subheader("1. Section (Parts) Configuration")
 sections_data = []
+
+# Keep track of the previous section's end question number
+prev_q_end = 0
+
 for i in range(num_sections):
     st.markdown(f"**Section {i+1}**")
     sc1, sc2, sc3, sc4, sc5 = st.columns(5)
     
+    # Set default max marks based on section index
+    if i == 0:
+        default_max = 1.0
+    elif i == 1:
+        default_max = 5.0
+    elif i == 2:
+        default_max = 10.0
+    else:
+        default_max = 5.0 # Fallback for section 4+
+
+    # The start Q defaults to the previous section's end Q + 1
+    default_start = int(prev_q_end + 1)
+    
     with sc1:
         sec_name = st.text_input("Section Name", value=chr(65+i), key=f"sec_name_{i}")
     with sc2:
-        q_start = st.number_input("Start Q No.", min_value=1, value=(i*5)+1, key=f"q_start_{i}")
+        q_start = st.number_input("Start Q No.", min_value=1, value=default_start, key=f"q_start_{i}")
     with sc3:
-        q_end = st.number_input("End Q No.", min_value=q_start, value=q_start+4, key=f"q_end_{i}")
+        # Default end is start + 4, but user can change it
+        q_end = st.number_input("End Q No.", min_value=int(q_start), value=int(q_start)+4, key=f"q_end_{i}")
     with sc4:
-        sec_max = st.number_input("Max Marks PER Question", min_value=1.0, value=5.0, key=f"sec_max_{i}")
+        sec_max = st.number_input("Max Marks PER Question", min_value=1.0, value=default_max, key=f"sec_max_{i}")
     with sc5:
         ans_any = st.number_input("Answer Any (Count)", min_value=1, value=2, key=f"ans_any_{i}")
+    
+    # Update prev_q_end for the next iteration
+    prev_q_end = q_end
     
     # Automatically generate the list of questions as strings
     q_list = [str(q) for q in range(int(q_start), int(q_end) + 1)]
