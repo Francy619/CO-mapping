@@ -85,7 +85,7 @@ for i in range(num_cos):
     with cc1:
         co_name = st.text_input(f"CO Name", value=f"CO{i+1}", key=f"co_name_{i}")
     with cc2:
-        co_weight = st.number_input(f"Weightage for {co_name}", min_value=1.0, value=10.0, key=f"co_w_{i}")
+        co_weight = st.number_input(f"Weightage for {co_name}", min_value=1.0, value=5.0, key=f"co_w_{i}")
     with cc3:
         co_qs = st.text_input(f"Questions mapped to {co_name} (comma separated)", key=f"co_qs_{i}")
     
@@ -248,4 +248,4 @@ if st.button("Generate Excel File", type="primary"):
 
 # --- CUSTOM FOOTER ---
 st.markdown("<br><br><hr>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; color: #808B96; font-size: 14px;'>Developed by Francis Thomas</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: #808B96; font-size: 14px;'><strong>Developed by:</strong> Mr. Francis Thomas, Assistant Professor, Department of Chemistry</p>", unsafe_allow_html=True)
