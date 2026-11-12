@@ -1,11 +1,27 @@
 import streamlit as st
 import xlsxwriter
 import io
+import os
 
-st.set_page_config(page_title="Advanced CO & Mark Generator", layout="wide")
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="CO Mark Generator | St. Dominic's College", layout="wide", page_icon="🏫")
 
-st.title("ST. DOMINIC'S COLLEGE, KANJIRAPALLY <br> Advanced Assessment & CO Mark Entry Generator")
-st.write("Configure sections, 'best of' logic, and CO weightages to generate a multi-sheet Excel tracker.")
+# --- CUSTOM HEADER WITH LOGO ---
+col_logo, col_title = st.columns([1, 6])
+
+with col_logo:
+    # Checks if logo file exists to prevent app crash if missing
+    if os.path.exists("logo.png"):
+        st.image("logo.png", width=120) 
+    else:
+        st.markdown("<div style='height: 120px; width: 120px; border: 2px dashed #ccc; display: flex; align-items: center; justify-content: center;'><small>Add logo.png</small></div>", unsafe_allow_html=True)
+
+with col_title:
+    st.markdown("<h1 style='color: #2E4053; margin-top: -15px;'>ST. DOMINIC'S COLLEGE, KANJIRAPALLY</h1>", unsafe_allow_html=True)
+    st.markdown("<h3 style='color: #5D6D7E; margin-top: -10px;'>Advanced Assessment & CO Mark Entry Generator</h3>", unsafe_allow_html=True)
+
+st.write("<p>Configure sections, 'best of' logic, and CO weightages to generate a multi-sheet Excel tracker.</p>", unsafe_allow_html=True)
+st.markdown("---")
 
 # --- UI FOR INPUTS ---
 col1, col2 = st.columns(2)
@@ -26,6 +42,7 @@ for i in range(num_sections):
     st.markdown(f"**Section {i+1}**")
     sc1, sc2, sc3, sc4, sc5 = st.columns(5)
     
+    # Set default max marks based on section index
     if i == 0:
         default_max = 1.0
     elif i == 1:
@@ -81,6 +98,7 @@ for i in range(num_cos):
 # --- EXCEL GENERATION ---
 if st.button("Generate Excel File", type="primary"):
     
+    # Calculate Max Marks for each CO
     q_to_max_mark = {}
     for sec in sections_data:
         for q in sec["questions"]:
@@ -94,26 +112,24 @@ if st.button("Generate Excel File", type="primary"):
     output = io.BytesIO()
     wb = xlsxwriter.Workbook(output, {'in_memory': True})
     
-    # Formats for Headers (Wrapped text)
+    # Text-wrapped Header Formats
     fmt_hdr = wb.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True})
     fmt_sec_tot_hdr = wb.add_format({'bold': True, 'bg_color': '#FCE4D6', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True})
     fmt_grand_hdr = wb.add_format({'bold': True, 'bg_color': '#E2EFDA', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True})
     
-    # Formats for Data Cells (Protection settings)
-    fmt_input = wb.add_format({'border': 1, 'align': 'center', 'locked': False}) # Unlocked for user input
-    fmt_locked = wb.add_format({'border': 1, 'align': 'center', 'locked': True}) # Locked formulas
+    # Protection Cell Formats (Locked/Unlocked)
+    fmt_input = wb.add_format({'border': 1, 'align': 'center', 'locked': False}) 
+    fmt_locked = wb.add_format({'border': 1, 'align': 'center', 'locked': True}) 
     fmt_sec_tot_cell = wb.add_format({'bold': True, 'bg_color': '#FCE4D6', 'border': 1, 'align': 'center', 'locked': True})
     fmt_grand_cell = wb.add_format({'bold': True, 'bg_color': '#E2EFDA', 'border': 1, 'align': 'center', 'locked': True})
     
-    # Highlight formats
+    # Error & Highlight Formats
     fmt_excess = wb.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
     fmt_error = wb.add_format({'bg_color': '#FF0000', 'font_color': '#FFFFFF', 'bold': True})
 
     # --- SHEET 1: MARK ENTRY ---
     ws1 = wb.add_worksheet("1. Mark Entry")
-    
-    # Protect sheet to enforce locked/unlocked cells
-    ws1.protect()
+    ws1.protect() # Protect sheet to enforce locked cells
     
     ws1.write(0, 0, "Roll No", fmt_hdr)
     ws1.write(0, 1, "Student Name", fmt_hdr)
@@ -139,32 +155,37 @@ if st.button("Generate Excel File", type="primary"):
         end_col_letter = xlsxwriter.utility.xl_col_to_name(col_idx - 1)
         range_str = f"{start_col_letter}2:{end_col_letter}{num_students+1}"
         
+        # Max Mark Error Formatting & Data Validation
         ws1.conditional_format(range_str, {'type': 'cell', 'criteria': '>', 'value': sec['mark_per_q'], 'format': fmt_error})
         ws1.data_validation(range_str, {'validate': 'decimal', 'criteria': '<=', 'value': sec['mark_per_q'], 'error_title': 'Invalid Mark', 'error_message': f'Marks for this section cannot exceed {sec["mark_per_q"]}.'})
         
+        # Section Total Header (Wrapped)
         ws1.write(0, col_idx, f"Part {sec['name']} Total\n(Best {sec['answer_any']})", fmt_sec_tot_hdr)
         ws1.set_column(col_idx, col_idx, 12)
         sec_total_cols.append(xlsxwriter.utility.xl_col_to_name(col_idx))
         
+        # Highlight Excess Answers
         if len(sec["questions"]) > sec["answer_any"]:
             ans_any = sec["answer_any"]
             formula = f"=AND({start_col_letter}2<>\"\", COUNT(${start_col_letter}2:${end_col_letter}2)>{ans_any}, RANK.EQ({start_col_letter}2,${start_col_letter}2:${end_col_letter}2, 1) + COUNTIF(${start_col_letter}2:{start_col_letter}2, {start_col_letter}2) - 1 <= COUNT(${start_col_letter}2:${end_col_letter}2)-{ans_any})"
             ws1.conditional_format(f"${start_col_letter}2:${end_col_letter}{num_students+1}", {'type': 'formula', 'criteria': formula, 'format': fmt_excess})
             
+        # Data Rows
         for r in range(1, num_students + 1):
             ws1.write(r, 0, "", fmt_input) # Blank Roll No (Unlocked)
             ws1.write(r, 1, "", fmt_input) # Blank Name (Unlocked)
             
             for c in range(col_idx - len(sec["questions"]), col_idx):
-                ws1.write(r, c, "", fmt_input) # Unlocked Mark Entry Cells
+                ws1.write(r, c, "", fmt_input) # Mark Entry Cells (Unlocked)
                 
-            # Wrapped in IF(COUNT()=0, "", ...) to keep 0s blank
+            # Best of N Formula (Blank if no data)
             large_parts = [f"IFERROR(LARGE({start_col_letter}{r+1}:{end_col_letter}{r+1}, {n}), 0)" for n in range(1, sec["answer_any"] + 1)]
             best_n_formula = f'=IF(COUNT({start_col_letter}{r+1}:{end_col_letter}{r+1})=0, "", {"+".join(large_parts)})'
             ws1.write_formula(r, col_idx, best_n_formula, fmt_sec_tot_cell)
             
         col_idx += 1
 
+    # Grand Total Column Sheet 1
     ws1.write(0, col_idx, "Grand Total", fmt_grand_hdr)
     ws1.set_column(col_idx, col_idx, 12)
     for r in range(1, num_students + 1):
@@ -195,24 +216,26 @@ if st.button("Generate Excel File", type="primary"):
         ws2.set_column(col2_idx + 1, col2_idx + 1, 12)
         
         for r in range(1, num_students + 1):
+            # Dynamic linking to Sheet 1 Name & Roll No (Blank if empty)
             ws2.write_formula(r, 0, f"=IF('1. Mark Entry'!A{r+1}=\"\", \"\", '1. Mark Entry'!A{r+1})", fmt_locked)
             ws2.write_formula(r, 1, f"=IF('1. Mark Entry'!B{r+1}=\"\", \"\", '1. Mark Entry'!B{r+1})", fmt_locked)
             
+            # CO Raw Total
             cells_to_sum = [f"'1. Mark Entry'!{q_col_mapping[q]}{r+1}" for q in data["questions"] if q in q_col_mapping]
-            
             if cells_to_sum:
                 sum_args = ",".join(cells_to_sum)
                 ws2.write_formula(r, col2_idx, f'=IF(COUNT({sum_args})=0, "", SUM({sum_args}))', fmt_locked)
             else:
                 ws2.write(r, col2_idx, "", fmt_locked)
                 
+            # CO Weightage Conversion (Rounded to 2 decimal points)
             raw_cell = f"{xlsxwriter.utility.xl_col_to_name(col2_idx)}{r+1}"
-            # Rounded to 2 decimal places and hidden when blank
             weight_formula = f'=IF({raw_cell}="", "", ROUND(({raw_cell}/{co_max_marks[co]})*{data["weightage"]}, 2))'
             ws2.write_formula(r, col2_idx + 1, weight_formula, fmt_sec_tot_cell)
             
         col2_idx += 2
         
+    # Final Exam Grand Total pulled from Sheet 1
     ws2.write(0, col2_idx, "Exam Grand Total", fmt_grand_hdr)
     ws2.set_column(col2_idx, col2_idx, 15)
     for r in range(1, num_students + 1):
@@ -220,5 +243,9 @@ if st.button("Generate Excel File", type="primary"):
 
     wb.close()
     
-    st.success("Advanced multi-sheet template generated with cell protection and blank formatting!")
-    st.download_button("📥 Download Excel File", data=output.getvalue(), file_name="Advanced_CO_Marks.xlsx")
+    st.success("Advanced multi-sheet template generated successfully!")
+    st.download_button("📥 Download Excel File", data=output.getvalue(), file_name="SDC_CO_Marks.xlsx")
+
+# --- CUSTOM FOOTER ---
+st.markdown("<br><br><hr>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: #808B96; font-size: 14px;'>Developed by Francis Thomas</p>", unsafe_allow_html=True)
