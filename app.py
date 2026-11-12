@@ -1,7 +1,6 @@
 import streamlit as st
 import xlsxwriter
 import io
-import re
 
 st.set_page_config(page_title="Advanced CO & Mark Generator", layout="wide")
 
@@ -23,17 +22,22 @@ st.subheader("1. Section (Parts) Configuration")
 sections_data = []
 for i in range(num_sections):
     st.markdown(f"**Section {i+1}**")
-    sc1, sc2, sc3, sc4 = st.columns(4)
-    with sc1:
-        sec_name = st.text_input(f"Section Name", value=chr(65+i), key=f"sec_name_{i}")
-    with sc2:
-        sec_qs = st.text_input(f"Question Numbers (comma separated)", value=f"{i*5+1}, {i*5+2}, {i*5+3}", key=f"sec_qs_{i}")
-    with sc3:
-        sec_max = st.number_input(f"Max Marks PER Question", min_value=1, value=5, key=f"sec_max_{i}")
-    with sc4:
-        ans_any = st.number_input(f"Answer Any (Count)", min_value=1, value=2, key=f"ans_any_{i}")
+    sc1, sc2, sc3, sc4, sc5 = st.columns(5)
     
-    q_list = [q.strip() for q in sec_qs.split(",") if q.strip()]
+    with sc1:
+        sec_name = st.text_input("Section Name", value=chr(65+i), key=f"sec_name_{i}")
+    with sc2:
+        q_start = st.number_input("Start Q No.", min_value=1, value=(i*5)+1, key=f"q_start_{i}")
+    with sc3:
+        q_end = st.number_input("End Q No.", min_value=q_start, value=q_start+4, key=f"q_end_{i}")
+    with sc4:
+        sec_max = st.number_input("Max Marks PER Question", min_value=1.0, value=5.0, key=f"sec_max_{i}")
+    with sc5:
+        ans_any = st.number_input("Answer Any (Count)", min_value=1, value=2, key=f"ans_any_{i}")
+    
+    # Automatically generate the list of questions as strings
+    q_list = [str(q) for q in range(int(q_start), int(q_end) + 1)]
+    
     sections_data.append({
         "name": sec_name,
         "questions": q_list,
@@ -64,7 +68,6 @@ for i in range(num_cos):
 # --- EXCEL GENERATION ---
 if st.button("Generate Excel File", type="primary"):
     
-    # Calculate Max Marks for each CO
     # Map each question to its max mark from section data
     q_to_max_mark = {}
     for sec in sections_data:
@@ -86,22 +89,25 @@ if st.button("Generate Excel File", type="primary"):
     fmt_sec_tot = wb.add_format({'bold': True, 'bg_color': '#FCE4D6', 'border': 1, 'align': 'center'})
     fmt_grand = wb.add_format({'bold': True, 'bg_color': '#E2EFDA', 'border': 1, 'align': 'center'})
     
-    # Cond. Formatting for excess marks (Red fill, dark red text)
-    fmt_excess = wb.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
+    # Highlight formats
+    fmt_excess = wb.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'}) # Light red for excess answers
+    fmt_error = wb.add_format({'bg_color': '#FF0000', 'font_color': '#FFFFFF', 'bold': True}) # Solid red for over max mark
 
     # --- SHEET 1: MARK ENTRY ---
     ws1 = wb.add_worksheet("1. Mark Entry")
-    
     ws1.write(0, 0, "Roll No", fmt_hdr)
     ws1.write(0, 1, "Student Name", fmt_hdr)
     ws1.set_column(0, 0, 8)
     ws1.set_column(1, 1, 20)
     
     col_idx = 2
-    q_col_mapping = {} # Store column letter for each question to link to Sheet 2
+    q_col_mapping = {}
     sec_total_cols = []
     
     for sec in sections_data:
+        if not sec["questions"]:
+            continue
+            
         start_col_letter = xlsxwriter.utility.xl_col_to_name(col_idx)
         
         # Write Question Headers
@@ -112,33 +118,45 @@ if st.button("Generate Excel File", type="primary"):
             col_idx += 1
             
         end_col_letter = xlsxwriter.utility.xl_col_to_name(col_idx - 1)
+        range_str = f"{start_col_letter}2:{end_col_letter}{num_students+1}"
+        
+        # 1. Error formatting for marks > max mark
+        ws1.conditional_format(range_str, {
+            'type': 'cell',
+            'criteria': '>',
+            'value': sec['mark_per_q'],
+            'format': fmt_error
+        })
+        
+        # 2. Add Data Validation as an extra guardrail (shows a warning popup)
+        ws1.data_validation(range_str, {
+            'validate': 'decimal',
+            'criteria': '<=',
+            'value': sec['mark_per_q'],
+            'error_title': 'Invalid Mark',
+            'error_message': f'Marks for this section cannot exceed {sec["mark_per_q"]}.'
+        })
         
         # Write Section Total Header
         ws1.write(0, col_idx, f"Part {sec['name']}\nTotal\n(Best {sec['answer_any']})", fmt_sec_tot)
         ws1.set_column(col_idx, col_idx, 12)
         sec_total_cols.append(xlsxwriter.utility.xl_col_to_name(col_idx))
         
-        # Apply Conditional Formatting for Excess Questions
-        # Logic: If count of answered > allowed, highlight the smallest ones.
+        # 3. Conditional Formatting for Excess Questions (lowest scores)
         if len(sec["questions"]) > sec["answer_any"]:
             ans_any = sec["answer_any"]
-            # Excel formula to flag excess (bottom marks) when more than N questions are answered
-            range_str = f"${start_col_letter}2:${end_col_letter}{num_students+1}"
             formula = f"=AND({start_col_letter}2<>\"\", COUNT(${start_col_letter}2:${end_col_letter}2)>{ans_any}, RANK.EQ({start_col_letter}2,${start_col_letter}2:${end_col_letter}2, 1) + COUNTIF(${start_col_letter}2:{start_col_letter}2, {start_col_letter}2) - 1 <= COUNT(${start_col_letter}2:${end_col_letter}2)-{ans_any})"
-            ws1.conditional_format(range_str, {'type': 'formula', 'criteria': formula, 'format': fmt_excess})
+            ws1.conditional_format(f"${start_col_letter}2:${end_col_letter}{num_students+1}", {'type': 'formula', 'criteria': formula, 'format': fmt_excess})
             
-        # Write Formulas for rows
+        # Write rows
         for r in range(1, num_students + 1):
-            # Roll no and empty name
             ws1.write(r, 0, r, fmt_cell)
             ws1.write(r, 1, "", fmt_cell)
             
-            # Blank cells for marks
             for c in range(col_idx - len(sec["questions"]), col_idx):
                 ws1.write(r, c, "", fmt_cell)
                 
             # 'Best of N' Sum Formula
-            # e.g., =IFERROR(LARGE(C2:E2, 1), 0) + IFERROR(LARGE(C2:E2, 2), 0)
             large_parts = [f"IFERROR(LARGE({start_col_letter}{r+1}:{end_col_letter}{r+1}, {n}), 0)" for n in range(1, sec["answer_any"] + 1)]
             best_n_formula = f"={'+'.join(large_parts)}"
             ws1.write_formula(r, col_idx, best_n_formula, fmt_sec_tot)
@@ -149,7 +167,6 @@ if st.button("Generate Excel File", type="primary"):
     ws1.write(0, col_idx, "Grand Total", fmt_grand)
     ws1.set_column(col_idx, col_idx, 12)
     for r in range(1, num_students + 1):
-        # Sum of all section totals
         sum_cells = [f"{c}{r+1}" for c in sec_total_cols]
         if sum_cells:
             ws1.write_formula(r, col_idx, f"=SUM({','.join(sum_cells)})", fmt_grand)
@@ -167,20 +184,16 @@ if st.button("Generate Excel File", type="primary"):
     
     col2_idx = 2
     for co, data in cos_data.items():
-        # Column for Raw CO Marks (summing all attempted, including excess)
         ws2.write(0, col2_idx, f"{co} Total\n(Max:{co_max_marks[co]})", fmt_hdr)
         ws2.set_column(col2_idx, col2_idx, 10)
         
-        # Column for Weightage Converted Marks
         ws2.write(0, col2_idx + 1, f"{co} Wgt.\n(Out of {data['weightage']})", fmt_sec_tot)
         ws2.set_column(col2_idx + 1, col2_idx + 1, 12)
         
         for r in range(1, num_students + 1):
-            # Copy Roll & Name
             ws2.write_formula(r, 0, f"='1. Mark Entry'!A{r+1}", fmt_cell)
             ws2.write_formula(r, 1, f"='1. Mark Entry'!B{r+1}", fmt_cell)
             
-            # Sum mapped questions from Sheet 1
             cells_to_sum = [f"'1. Mark Entry'!{q_col_mapping[q]}{r+1}" for q in data["questions"] if q in q_col_mapping]
             
             if cells_to_sum:
@@ -188,14 +201,12 @@ if st.button("Generate Excel File", type="primary"):
             else:
                 ws2.write(r, col2_idx, 0, fmt_cell)
                 
-            # Weightage formula: = (Obtained / CO_Max) * Weightage
             raw_cell = f"{xlsxwriter.utility.xl_col_to_name(col2_idx)}{r+1}"
-            weight_formula = f"=({raw_cell}/{co_max_marks[co]})*{data['weightage']}"
+            weight_formula = f"=IFERROR(({raw_cell}/{co_max_marks[co]})*{data['weightage']}, 0)"
             ws2.write_formula(r, col2_idx + 1, weight_formula, fmt_sec_tot)
             
         col2_idx += 2
         
-    # Bring over Grand Total (without excess)
     ws2.write(0, col2_idx, "Exam Grand Total", fmt_grand)
     ws2.set_column(col2_idx, col2_idx, 15)
     for r in range(1, num_students + 1):
