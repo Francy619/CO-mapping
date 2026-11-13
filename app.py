@@ -2,6 +2,7 @@ import streamlit as st
 import xlsxwriter
 import io
 import os
+import re
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="CO Mark Generator | St. Dominic's College", layout="wide", page_icon="🏫")
@@ -24,6 +25,8 @@ st.write("<p>Configure sections, 'best of' logic, and CO weightages to generate 
 st.markdown("---")
 
 # --- UI FOR INPUTS ---
+course_name = st.text_input("Name of the Course", placeholder="e.g., CHE101 - Inorganic Chemistry I")
+
 col1, col2 = st.columns(2)
 with col1:
     num_students = st.number_input("Number of Students", min_value=1, max_value=200, value=20)
@@ -97,6 +100,7 @@ for i in range(num_cos):
 
 # --- EXCEL GENERATION ---
 if st.button("Generate Excel File", type="primary"):
+    display_course = course_name.strip() if course_name.strip() else "Course Assessment"
     
     # Calculate Max Marks for each CO
     q_to_max_mark = {}
@@ -112,7 +116,8 @@ if st.button("Generate Excel File", type="primary"):
     output = io.BytesIO()
     wb = xlsxwriter.Workbook(output, {'in_memory': True})
     
-    # Text-wrapped Header Formats
+    # Title & Header Formats
+    fmt_title = wb.add_format({'bold': True, 'font_size': 13, 'bg_color': '#2E4053', 'font_color': '#FFFFFF', 'align': 'center', 'valign': 'vcenter', 'border': 1})
     fmt_hdr = wb.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True})
     fmt_sec_tot_hdr = wb.add_format({'bold': True, 'bg_color': '#FCE4D6', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True})
     fmt_grand_hdr = wb.add_format({'bold': True, 'bg_color': '#E2EFDA', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True})
@@ -127,12 +132,17 @@ if st.button("Generate Excel File", type="primary"):
     fmt_excess = wb.add_format({'bg_color': '#FFC7CE', 'font_color': '#9C0006'})
     fmt_error = wb.add_format({'bg_color': '#FF0000', 'font_color': '#FFFFFF', 'bold': True})
 
+    # Row offsets (Row 0 = Course Banner, Row 1 = Headers, Row 2+ = Student Data)
+    hdr_row = 1
+    data_start_row = 2
+
     # --- SHEET 1: MARK ENTRY ---
     ws1 = wb.add_worksheet("1. Mark Entry")
-    ws1.protect() # Protect sheet to enforce locked cells
+    ws1.protect()
+    ws1.set_row(0, 25)
     
-    ws1.write(0, 0, "Roll No", fmt_hdr)
-    ws1.write(0, 1, "Student Name", fmt_hdr)
+    ws1.write(hdr_row, 0, "Roll No", fmt_hdr)
+    ws1.write(hdr_row, 1, "Student Name", fmt_hdr)
     ws1.set_column(0, 0, 8)
     ws1.set_column(1, 1, 20)
     
@@ -147,31 +157,35 @@ if st.button("Generate Excel File", type="primary"):
         start_col_letter = xlsxwriter.utility.xl_col_to_name(col_idx)
         
         for q in sec["questions"]:
-            ws1.write(0, col_idx, f"Q{q}\n(Max:{sec['mark_per_q']})", fmt_hdr)
+            ws1.write(hdr_row, col_idx, f"Q{q}\n(Max:{sec['mark_per_q']})", fmt_hdr)
             ws1.set_column(col_idx, col_idx, 8)
             q_col_mapping[q] = xlsxwriter.utility.xl_col_to_name(col_idx)
             col_idx += 1
             
         end_col_letter = xlsxwriter.utility.xl_col_to_name(col_idx - 1)
-        range_str = f"{start_col_letter}2:{end_col_letter}{num_students+1}"
+        first_excel_row = data_start_row + 1 # Excel row 3
+        last_excel_row = data_start_row + num_students
+        range_str = f"{start_col_letter}{first_excel_row}:{end_col_letter}{last_excel_row}"
         
         # Max Mark Error Formatting & Data Validation
         ws1.conditional_format(range_str, {'type': 'cell', 'criteria': '>', 'value': sec['mark_per_q'], 'format': fmt_error})
         ws1.data_validation(range_str, {'validate': 'decimal', 'criteria': '<=', 'value': sec['mark_per_q'], 'error_title': 'Invalid Mark', 'error_message': f'Marks for this section cannot exceed {sec["mark_per_q"]}.'})
         
         # Section Total Header (Wrapped)
-        ws1.write(0, col_idx, f"Part {sec['name']} Total\n(Best {sec['answer_any']})", fmt_sec_tot_hdr)
+        ws1.write(hdr_row, col_idx, f"Part {sec['name']} Total\n(Best {sec['answer_any']})", fmt_sec_tot_hdr)
         ws1.set_column(col_idx, col_idx, 12)
         sec_total_cols.append(xlsxwriter.utility.xl_col_to_name(col_idx))
         
         # Highlight Excess Answers
         if len(sec["questions"]) > sec["answer_any"]:
             ans_any = sec["answer_any"]
-            formula = f"=AND({start_col_letter}2<>\"\", COUNT(${start_col_letter}2:${end_col_letter}2)>{ans_any}, RANK.EQ({start_col_letter}2,${start_col_letter}2:${end_col_letter}2, 1) + COUNTIF(${start_col_letter}2:{start_col_letter}2, {start_col_letter}2) - 1 <= COUNT(${start_col_letter}2:${end_col_letter}2)-{ans_any})"
-            ws1.conditional_format(f"${start_col_letter}2:${end_col_letter}{num_students+1}", {'type': 'formula', 'criteria': formula, 'format': fmt_excess})
+            formula = f"=AND({start_col_letter}{first_excel_row}<>\"\", COUNT(${start_col_letter}{first_excel_row}:${end_col_letter}{first_excel_row})>{ans_any}, RANK.EQ({start_col_letter}{first_excel_row},${start_col_letter}{first_excel_row}:${end_col_letter}{first_excel_row}, 1) + COUNTIF(${start_col_letter}{first_excel_row}:{start_col_letter}{first_excel_row}, {start_col_letter}{first_excel_row}) - 1 <= COUNT(${start_col_letter}{first_excel_row}:${end_col_letter}{first_excel_row})-{ans_any})"
+            ws1.conditional_format(f"${start_col_letter}{first_excel_row}:${end_col_letter}{last_excel_row}", {'type': 'formula', 'criteria': formula, 'format': fmt_excess})
             
         # Data Rows
-        for r in range(1, num_students + 1):
+        for s in range(num_students):
+            r = data_start_row + s
+            excel_r = r + 1
             ws1.write(r, 0, "", fmt_input) # Blank Roll No (Unlocked)
             ws1.write(r, 1, "", fmt_input) # Blank Name (Unlocked)
             
@@ -179,49 +193,56 @@ if st.button("Generate Excel File", type="primary"):
                 ws1.write(r, c, "", fmt_input) # Mark Entry Cells (Unlocked)
                 
             # Best of N Formula (Blank if no data)
-            large_parts = [f"IFERROR(LARGE({start_col_letter}{r+1}:{end_col_letter}{r+1}, {n}), 0)" for n in range(1, sec["answer_any"] + 1)]
-            best_n_formula = f'=IF(COUNT({start_col_letter}{r+1}:{end_col_letter}{r+1})=0, "", {"+".join(large_parts)})'
+            large_parts = [f"IFERROR(LARGE({start_col_letter}{excel_r}:{end_col_letter}{excel_r}, {n}), 0)" for n in range(1, sec["answer_any"] + 1)]
+            best_n_formula = f'=IF(COUNT({start_col_letter}{excel_r}:{end_col_letter}{excel_r})=0, "", {"+".join(large_parts)})'
             ws1.write_formula(r, col_idx, best_n_formula, fmt_sec_tot_cell)
             
         col_idx += 1
 
     # Grand Total Column Sheet 1
-    ws1.write(0, col_idx, "Grand Total", fmt_grand_hdr)
+    ws1.write(hdr_row, col_idx, "Grand Total", fmt_grand_hdr)
     ws1.set_column(col_idx, col_idx, 12)
-    for r in range(1, num_students + 1):
-        sum_cells = [f"{c}{r+1}" for c in sec_total_cols]
+    for s in range(num_students):
+        r = data_start_row + s
+        excel_r = r + 1
+        sum_cells = [f"{c}{excel_r}" for c in sec_total_cols]
         if sum_cells:
             sum_args = ",".join(sum_cells)
             ws1.write_formula(r, col_idx, f'=IF(COUNT({sum_args})=0, "", SUM({sum_args}))', fmt_grand_cell)
         else:
             ws1.write(r, col_idx, "", fmt_grand_cell)
 
+    # Merge Course Banner across Sheet 1
+    ws1.merge_range(0, 0, 0, col_idx, f"Course: {display_course} — Mark Entry", fmt_title)
     grand_total_col_sheet1 = xlsxwriter.utility.xl_col_to_name(col_idx)
 
     # --- SHEET 2: CONSOLIDATION ---
     ws2 = wb.add_worksheet("2. CO Consolidation")
-    ws2.protect() # Protect consolidation sheet
+    ws2.protect()
+    ws2.set_row(0, 25)
     
-    ws2.write(0, 0, "Roll No", fmt_hdr)
-    ws2.write(0, 1, "Student Name", fmt_hdr)
+    ws2.write(hdr_row, 0, "Roll No", fmt_hdr)
+    ws2.write(hdr_row, 1, "Student Name", fmt_hdr)
     ws2.set_column(0, 0, 8)
     ws2.set_column(1, 1, 20)
     
     col2_idx = 2
     for co, data in cos_data.items():
-        ws2.write(0, col2_idx, f"{co} Total\n(Max:{co_max_marks[co]})", fmt_hdr)
+        ws2.write(hdr_row, col2_idx, f"{co} Total\n(Max:{co_max_marks[co]})", fmt_hdr)
         ws2.set_column(col2_idx, col2_idx, 10)
         
-        ws2.write(0, col2_idx + 1, f"{co} Wgt.\n(Out of {data['weightage']})", fmt_sec_tot_hdr)
+        ws2.write(hdr_row, col2_idx + 1, f"{co} Wgt.\n(Out of {data['weightage']})", fmt_sec_tot_hdr)
         ws2.set_column(col2_idx + 1, col2_idx + 1, 12)
         
-        for r in range(1, num_students + 1):
+        for s in range(num_students):
+            r = data_start_row + s
+            excel_r = r + 1
             # Dynamic linking to Sheet 1 Name & Roll No (Blank if empty)
-            ws2.write_formula(r, 0, f"=IF('1. Mark Entry'!A{r+1}=\"\", \"\", '1. Mark Entry'!A{r+1})", fmt_locked)
-            ws2.write_formula(r, 1, f"=IF('1. Mark Entry'!B{r+1}=\"\", \"\", '1. Mark Entry'!B{r+1})", fmt_locked)
+            ws2.write_formula(r, 0, f"=IF('1. Mark Entry'!A{excel_r}=\"\", \"\", '1. Mark Entry'!A{excel_r})", fmt_locked)
+            ws2.write_formula(r, 1, f"=IF('1. Mark Entry'!B{excel_r}=\"\", \"\", '1. Mark Entry'!B{excel_r})", fmt_locked)
             
             # CO Raw Total
-            cells_to_sum = [f"'1. Mark Entry'!{q_col_mapping[q]}{r+1}" for q in data["questions"] if q in q_col_mapping]
+            cells_to_sum = [f"'1. Mark Entry'!{q_col_mapping[q]}{excel_r}" for q in data["questions"] if q in q_col_mapping]
             if cells_to_sum:
                 sum_args = ",".join(cells_to_sum)
                 ws2.write_formula(r, col2_idx, f'=IF(COUNT({sum_args})=0, "", SUM({sum_args}))', fmt_locked)
@@ -229,22 +250,30 @@ if st.button("Generate Excel File", type="primary"):
                 ws2.write(r, col2_idx, "", fmt_locked)
                 
             # CO Weightage Conversion (Rounded to 2 decimal points)
-            raw_cell = f"{xlsxwriter.utility.xl_col_to_name(col2_idx)}{r+1}"
+            raw_cell = f"{xlsxwriter.utility.xl_col_to_name(col2_idx)}{excel_r}"
             weight_formula = f'=IF({raw_cell}="", "", ROUND(({raw_cell}/{co_max_marks[co]})*{data["weightage"]}, 2))'
             ws2.write_formula(r, col2_idx + 1, weight_formula, fmt_sec_tot_cell)
             
         col2_idx += 2
         
     # Final Exam Grand Total pulled from Sheet 1
-    ws2.write(0, col2_idx, "Exam Grand Total", fmt_grand_hdr)
+    ws2.write(hdr_row, col2_idx, "Exam Grand Total", fmt_grand_hdr)
     ws2.set_column(col2_idx, col2_idx, 15)
-    for r in range(1, num_students + 1):
-        ws2.write_formula(r, col2_idx, f"=IF('1. Mark Entry'!{grand_total_col_sheet1}{r+1}=\"\", \"\", '1. Mark Entry'!{grand_total_col_sheet1}{r+1})", fmt_grand_cell)
+    for s in range(num_students):
+        r = data_start_row + s
+        excel_r = r + 1
+        ws2.write_formula(r, col2_idx, f"=IF('1. Mark Entry'!{grand_total_col_sheet1}{excel_r}=\"\", \"\", '1. Mark Entry'!{grand_total_col_sheet1}{excel_r})", fmt_grand_cell)
+
+    # Merge Course Banner across Sheet 2
+    ws2.merge_range(0, 0, 0, col2_idx, f"Course: {display_course} — CO Consolidation", fmt_title)
 
     wb.close()
     
+    # Sanitize course name for the Excel filename
+    safe_course_filename = re.sub(r'[^A-Za-z0-9_\-]', '_', course_name.strip()) if course_name.strip() else "SDC"
+    
     st.success("Advanced multi-sheet template generated successfully!")
-    st.download_button("📥 Download Excel File", data=output.getvalue(), file_name="SDC_CO_Marks.xlsx")
+    st.download_button("📥 Download Excel File", data=output.getvalue(), file_name=f"{safe_course_filename}_CO_Marks.xlsx")
 
 # --- CUSTOM FOOTER ---
 st.markdown("<br><br><hr>", unsafe_allow_html=True)
